@@ -14,6 +14,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -42,6 +43,7 @@ public class GoodMemClient {
     private final String apiKey;
     private final Duration timeout;
     private final boolean verifySsl;
+    private final HttpClient httpClient;
 
     /**
      * Creates a new GoodMemClient.
@@ -56,6 +58,7 @@ public class GoodMemClient {
         this.apiKey = ensureNotBlank(apiKey, "apiKey");
         this.timeout = ensureNotNull(timeout, "timeout");
         this.verifySsl = verifySsl;
+        this.httpClient = buildHttpClient();
     }
 
     public String baseUrl() {
@@ -77,11 +80,21 @@ public class GoodMemClient {
             List<JsonObject> spaces = listSpaces();
             for (JsonObject space : spaces) {
                 if (space.has("name") && name.equals(space.get("name").getAsString())) {
+                    String actualEmbedderId = embedderId;
+                    if (space.has("spaceEmbedders")) {
+                        JsonArray embedders = space.getAsJsonArray("spaceEmbedders");
+                        if (!embedders.isEmpty()) {
+                            JsonObject first = embedders.get(0).getAsJsonObject();
+                            if (first.has("embedderId")) {
+                                actualEmbedderId = first.get("embedderId").getAsString();
+                            }
+                        }
+                    }
                     JsonObject result = new JsonObject();
                     result.addProperty("success", true);
                     result.addProperty("spaceId", space.get("spaceId").getAsString());
                     result.addProperty("name", space.get("name").getAsString());
-                    result.addProperty("embedderId", embedderId);
+                    result.addProperty("embedderId", actualEmbedderId);
                     result.addProperty("message", "Space already exists, reusing existing space");
                     result.addProperty("reused", true);
                     return result;
@@ -171,7 +184,7 @@ public class GoodMemClient {
                 requestBody.addProperty("contentType", mimeType);
 
                 if (mimeType.startsWith("text/")) {
-                    requestBody.addProperty("originalContent", new String(fileBytes));
+                    requestBody.addProperty("originalContent", new String(fileBytes, StandardCharsets.UTF_8));
                 } else {
                     requestBody.addProperty("originalContentB64",
                             Base64.getEncoder().encodeToString(fileBytes));
@@ -361,7 +374,7 @@ public class GoodMemClient {
 
     // -- HTTP helpers --
 
-    private HttpClient newHttpClient() {
+    private HttpClient buildHttpClient() {
         HttpClient.Builder builder = HttpClient.newBuilder()
                 .connectTimeout(timeout);
         if (!verifySsl) {
@@ -441,8 +454,7 @@ public class GoodMemClient {
 
     private HttpResponse<String> execute(HttpRequest request) {
         try {
-            HttpClient client = newHttpClient();
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
 
             if (response.statusCode() >= 400) {
                 throw new GoodMemException(String.format(

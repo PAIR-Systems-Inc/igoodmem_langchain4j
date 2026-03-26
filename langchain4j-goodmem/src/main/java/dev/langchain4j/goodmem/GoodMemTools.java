@@ -5,6 +5,7 @@ import com.google.gson.JsonObject;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
 
+import java.lang.reflect.Type;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -83,6 +84,7 @@ public class GoodMemTools {
      * @param spaceId     the UUID of the space to store the memory in
      * @param textContent plain text content to store as memory
      * @param filePath    local file path to upload as memory (PDF, DOCX, image, etc.)
+     * @param metadataJson optional JSON string of key-value metadata to attach to the memory
      * @return JSON string with the operation result including memoryId
      */
     @Tool("Store a document as a new memory in a GoodMem space. "
@@ -91,9 +93,15 @@ public class GoodMemTools {
     public String goodmemCreateMemory(
             @P("The UUID of the space to store the memory in") String spaceId,
             @P(value = "Plain text content to store as memory. If both filePath and textContent are provided, the file takes priority.", required = false) String textContent,
-            @P(value = "Local file path to upload as memory (PDF, DOCX, image, etc.). Content type is auto-detected.", required = false) String filePath) {
+            @P(value = "Local file path to upload as memory (PDF, DOCX, image, etc.). Content type is auto-detected.", required = false) String filePath,
+            @P(value = "Optional JSON string of key-value metadata to attach to the memory, e.g. '{\"source\":\"email\",\"author\":\"John\"}'", required = false) String metadataJson) {
         try {
-            JsonObject result = client.createMemory(spaceId, textContent, filePath, null);
+            Map<String, Object> metadata = null;
+            if (metadataJson != null && !metadataJson.isEmpty()) {
+                Type mapType = new com.google.gson.reflect.TypeToken<Map<String, Object>>() {}.getType();
+                metadata = GSON.fromJson(metadataJson, mapType);
+            }
+            JsonObject result = client.createMemory(spaceId, textContent, filePath, metadata);
             return GSON.toJson(result);
         } catch (Exception e) {
             return errorJson(e);

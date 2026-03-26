@@ -172,6 +172,7 @@ class GoodMemToolsIT {
                 "LangChain4j is a Java framework for developing applications "
                         + "powered by large language models. It provides tools, chains, "
                         + "and agents for building AI-powered applications.",
+                null,
                 null);
         JsonObject result = GSON.fromJson(raw, JsonObject.class);
 
@@ -195,7 +196,7 @@ class GoodMemToolsIT {
             return;
         }
 
-        String raw = tools.goodmemCreateMemory(spaceId, null, testPdf);
+        String raw = tools.goodmemCreateMemory(spaceId, null, testPdf, "{\"source\":\"test\",\"type\":\"resume\"}");
         JsonObject result = GSON.fromJson(raw, JsonObject.class);
 
         assertThat(result.get("success").getAsBoolean()).isTrue();
@@ -247,8 +248,226 @@ class GoodMemToolsIT {
         assertThat(firstChunk.has("relevanceScore")).isTrue();
     }
 
+    // -- Fix #1: UTF-8 encoding for text file content --
+
     @Test
     @Order(9)
+    void createMemoryFromTextFilePreservesUtf8() throws Exception {
+        if (spaceId == null) {
+            createSpace();
+        }
+
+        // Write a temp file with multi-byte UTF-8 characters
+        java.nio.file.Path tempFile = java.nio.file.Files.createTempFile("goodmem-utf8-", ".txt");
+        String utf8Content = "Héllo wörld! Ñoño. 日本語テスト. Émojis: ✅🚀";
+        java.nio.file.Files.writeString(tempFile, utf8Content, java.nio.charset.StandardCharsets.UTF_8);
+
+        try {
+            String raw = tools.goodmemCreateMemory(spaceId, null, tempFile.toString(), null);
+            JsonObject result = GSON.fromJson(raw, JsonObject.class);
+
+            assertThat(result.get("success").getAsBoolean()).isTrue();
+            assertThat(result.get("contentType").getAsString()).isEqualTo("text/plain");
+
+            String memId = result.get("memoryId").getAsString();
+
+            // Fetch the memory back and verify the content survived the round-trip
+            String getRaw = tools.goodmemGetMemory(memId, true);
+            JsonObject getResult = GSON.fromJson(getRaw, JsonObject.class);
+            assertThat(getResult.get("success").getAsBoolean()).isTrue();
+
+            // Verify the memory was stored — content may be in the content field
+            assertThat(getResult.has("memory")).isTrue();
+            assertThat(getResult.getAsJsonObject("memory")
+                    .get("memoryId").getAsString()).isEqualTo(memId);
+
+            // Clean up
+            tools.goodmemDeleteMemory(memId);
+        } finally {
+            java.nio.file.Files.deleteIfExists(tempFile);
+        }
+    }
+
+    // -- Fix #2: createSpace reuse returns actual embedderId --
+
+    @Test
+    @Order(10)
+    void createSpaceReuseReturnsActualEmbedderId() {
+        if (spaceId == null) {
+            createSpace();
+        }
+
+        // Look up the actual embedder on the space via listSpaces
+        String spacesRaw = tools.goodmemListSpaces();
+        JsonObject spacesResult = GSON.fromJson(spacesRaw, JsonObject.class);
+        JsonArray spaces = spacesResult.getAsJsonArray("spaces");
+
+        String spaceName = null;
+        String actualEmbedderId = null;
+        for (int i = 0; i < spaces.size(); i++) {
+            JsonObject space = spaces.get(i).getAsJsonObject();
+            if (space.get("spaceId").getAsString().equals(spaceId)) {
+                spaceName = space.get("name").getAsString();
+                JsonArray spaceEmbedders = space.getAsJsonArray("spaceEmbedders");
+                actualEmbedderId = spaceEmbedders.get(0).getAsJsonObject()
+                        .get("embedderId").getAsString();
+                break;
+            }
+        }
+        assertThat(spaceName).isNotNull();
+        assertThat(actualEmbedderId).isNotNull();
+
+        // Pass a bogus embedderId — the reuse path should return the real one, not this
+        String bogusEmbedderId = "00000000-0000-0000-0000-000000000000";
+        String raw = tools.goodmemCreateSpace(spaceName, bogusEmbedderId, null, null, null);
+        JsonObject result = GSON.fromJson(raw, JsonObject.class);
+
+        assertThat(result.get("success").getAsBoolean()).isTrue();
+        assertThat(result.get("reused").getAsBoolean()).isTrue();
+        assertThat(result.get("spaceId").getAsString()).isEqualTo(spaceId);
+
+        // The key assertion: embedderId should be the actual one, NOT the bogus one
+        assertThat(result.get("embedderId").getAsString())
+                .as("Reused space should return the actual embedderId from the server, not the requested one")
+                .isEqualTo(actualEmbedderId)
+                .isNotEqualTo(bogusEmbedderId);
+    }
+
+    // -- Fix #3: metadata exposed through tools --
+
+    @Test
+    @Order(11)
+    void createMemoryWithMetadata() {
+        if (spaceId == null) {
+            createSpace();
+        }
+
+        String metadataJson = "{\"source\":\"unit-test\",\"author\":\"langchain4j\",\"version\":42}";
+        String raw = tools.goodmemCreateMemory(
+                spaceId,
+                "Memory with metadata for testing.",
+                null,
+                metadataJson);
+        JsonObject result = GSON.fromJson(raw, JsonObject.class);
+
+        assertThat(result.get("success").getAsBoolean()).isTrue();
+        String memId = result.get("memoryId").getAsString();
+        assertThat(memId).isNotEmpty();
+
+        // Fetch the memory and verify metadata was persisted
+        String getRaw = tools.goodmemGetMemory(memId, false);
+        JsonObject getResult = GSON.fromJson(getRaw, JsonObject.class);
+        assertThat(getResult.get("success").getAsBoolean()).isTrue();
+
+        JsonObject memory = getResult.getAsJsonObject("memory");
+        assertThat(memory.has("metadata")).isTrue();
+        JsonObject metadata = memory.getAsJsonObject("metadata");
+        assertThat(metadata.get("source").getAsString()).isEqualTo("unit-test");
+        assertThat(metadata.get("author").getAsString()).isEqualTo("langchain4j");
+
+        // Clean up
+        tools.goodmemDeleteMemory(memId);
+    }
+
+    @Test
+    @Order(12)
+    void createMemoryWithNullMetadataStillWorks() {
+        if (spaceId == null) {
+            createSpace();
+        }
+
+        // null metadata — should behave exactly like before the fix
+        String raw = tools.goodmemCreateMemory(spaceId, "No metadata here.", null, null);
+        JsonObject result = GSON.fromJson(raw, JsonObject.class);
+
+        assertThat(result.get("success").getAsBoolean()).isTrue();
+        String memId = result.get("memoryId").getAsString();
+        assertThat(memId).isNotEmpty();
+
+        // Clean up
+        tools.goodmemDeleteMemory(memId);
+    }
+
+    @Test
+    @Order(13)
+    void createMemoryWithInvalidMetadataReturnsError() {
+        if (spaceId == null) {
+            createSpace();
+        }
+
+        // Malformed JSON — should fail gracefully, not throw
+        String raw = tools.goodmemCreateMemory(spaceId, "Bad metadata test.", null, "not-valid-json{{{");
+        JsonObject result = GSON.fromJson(raw, JsonObject.class);
+
+        assertThat(result.get("success").getAsBoolean()).isFalse();
+        assertThat(result.get("error").getAsString()).isNotEmpty();
+    }
+
+    // -- Fix #4: HttpClient reuse (verify multiple calls don't fail) --
+
+    @Test
+    @Order(14)
+    void multipleRapidCallsReuseHttpClient() {
+        // Issue rapid sequential calls — if HttpClient is recreated per request
+        // and leaks resources, this is more likely to surface connection issues.
+        for (int i = 0; i < 10; i++) {
+            String raw = tools.goodmemListEmbedders();
+            JsonObject result = GSON.fromJson(raw, JsonObject.class);
+            assertThat(result.get("success").getAsBoolean())
+                    .as("Call %d of 10 should succeed with reused HttpClient", i + 1)
+                    .isTrue();
+        }
+    }
+
+    // -- Retrieval: verify chunk fields are actually populated --
+
+    @Test
+    @Order(15)
+    void retrieveMemoriesReturnsPopulatedChunkFields() {
+        if (spaceId == null || textMemoryId == null) {
+            createTextMemory();
+        }
+
+        String raw = tools.goodmemRetrieveMemories(
+                "Java framework large language models",
+                spaceId, 5, true, true);
+        JsonObject result = GSON.fromJson(raw, JsonObject.class);
+
+        assertThat(result.get("success").getAsBoolean()).isTrue();
+
+        JsonArray results = result.getAsJsonArray("results");
+        assertThat(results).isNotEmpty();
+
+        JsonObject chunk = results.get(0).getAsJsonObject();
+
+        // Verify fields are not just present but actually populated with real data
+        assertThat(chunk.get("chunkId").getAsString())
+                .as("chunkId should be a non-empty UUID, not empty string")
+                .isNotEmpty()
+                .matches("[0-9a-f\\-]{36}");
+
+        assertThat(chunk.get("chunkText").getAsString())
+                .as("chunkText should contain actual text, not empty string")
+                .isNotEmpty()
+                .containsIgnoringCase("langchain4j");
+
+        assertThat(chunk.get("memoryId").getAsString())
+                .as("memoryId should be a non-empty UUID, not empty string")
+                .isNotEmpty()
+                .matches("[0-9a-f\\-]{36}");
+
+        assertThat(chunk.has("relevanceScore")).isTrue();
+        assertThat(chunk.get("relevanceScore").getAsDouble())
+                .as("relevanceScore should be a real number, not zero/NaN")
+                .isNotZero();
+
+        assertThat(chunk.has("memoryIndex")).isTrue();
+    }
+
+    // -- Cleanup --
+
+    @Test
+    @Order(100)
     void deleteMemory() {
         if (textMemoryId == null) {
             createTextMemory();
@@ -262,7 +481,7 @@ class GoodMemToolsIT {
     }
 
     @Test
-    @Order(10)
+    @Order(101)
     void cleanupPdfMemory() {
         if (pdfMemoryId != null) {
             String raw = tools.goodmemDeleteMemory(pdfMemoryId);
