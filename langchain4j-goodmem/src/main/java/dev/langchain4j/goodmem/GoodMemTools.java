@@ -116,7 +116,7 @@ public class GoodMemTools {
      * @param spaceIds                 one or more space UUIDs separated by commas
      * @param maxResults               maximum number of matching chunks to return
      * @param includeMemoryDefinition  fetch the full memory metadata alongside matched chunks
-     * @param waitForIndexing          retry for up to 60 seconds when no results are found
+     * @param waitForIndexing          retry for up to 10 seconds when no results are found
      * @return JSON string with the retrieval results
      */
     @Tool("Perform similarity-based semantic retrieval across one or more GoodMem spaces. "
@@ -126,7 +126,7 @@ public class GoodMemTools {
             @P("One or more space UUIDs to search across, separated by commas (e.g., 'id1,id2')") String spaceIds,
             @P(value = "Maximum number of matching chunks to return", required = false) Integer maxResults,
             @P(value = "Fetch the full memory metadata alongside the matched chunks", required = false) Boolean includeMemoryDefinition,
-            @P(value = "Retry for up to 60 seconds when no results are found (use when memories were just added)", required = false) Boolean waitForIndexing) {
+            @P(value = "Retry for up to 10 seconds when no results are found (use when memories were just added)", required = false) Boolean waitForIndexing) {
         try {
             JsonObject result = client.retrieveMemories(
                     query,

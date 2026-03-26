@@ -220,7 +220,7 @@ public class GoodMemClient {
     /**
      * Retrieve memories via semantic similarity search.
      * <p>
-     * Supports polling for up to 60 seconds when waitForIndexing is enabled
+     * Supports polling for up to 10 seconds when waitForIndexing is enabled
      * and no results are found initially.
      */
     public JsonObject retrieveMemories(String query, String spaceIds, int maxResults,
@@ -245,8 +245,8 @@ public class GoodMemClient {
         requestBody.addProperty("requestedSize", maxResults);
         requestBody.addProperty("fetchMemory", includeMemoryDefinition);
 
-        long maxWaitMs = 60_000;
-        long pollIntervalMs = 5_000;
+        long maxWaitMs = 10_000;
+        long pollIntervalMs = 2_000;
         long start = System.currentTimeMillis();
         JsonObject lastResult = null;
 
@@ -315,7 +315,7 @@ public class GoodMemClient {
             long elapsed = System.currentTimeMillis() - start;
             if (elapsed >= maxWaitMs) {
                 lastResult.addProperty("message",
-                        "No results found after waiting 60 seconds for indexing. " +
+                        "No results found after waiting 10 seconds for indexing. " +
                         "Memories may still be processing.");
                 return lastResult;
             }
