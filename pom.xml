@@ -131,6 +131,7 @@
         <module>langchain4j-agentic-mcp</module>
         <module>langchain4j-agentic-patterns</module>
         <module>langchain4j-skills</module>
+        <module>langchain4j-goodmem</module>
 
         <!-- observability -->
         <module>langchain4j-micrometer-metrics</module>
